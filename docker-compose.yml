@@ -1,0 +1,162 @@
+name: valve-course-private
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-valve_course}
+      POSTGRES_USER: ${POSTGRES_USER:-valve_course}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      # PostgreSQL 18 uses versioned PGDATA below /var/lib/postgresql.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-valve_course} -d ${POSTGRES_DB:-valve_course}'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [app-net]
+
+  redis:
+    image: redis:8.2-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [app-net]
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-valve_course}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-valve_course}
+      REDIS_URL: redis://redis:6379
+    command: ['node', 'apps/api/dist/main.js']
+    volumes:
+      - medical-data:/data/medical
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    networks: [app-net, model-net]
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-valve_course}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-valve_course}
+      REDIS_URL: redis://redis:6379
+    command: ['node', 'apps/api/dist/worker.js']
+    volumes:
+      - medical-data:/data/medical
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks: [app-net, model-net]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    restart: 'no'
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-valve_course}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-valve_course}
+    command: ['node', 'apps/api/dist/database/migrate.js']
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [app-net]
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    restart: unless-stopped
+    networks: [public-net]
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - '${HTTP_PORT:-8080}:80'
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_started }
+    networks: [public-net, app-net]
+
+  backup-db:
+    image: postgres:18-alpine
+    profiles: [backup]
+    env_file: .env
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB:-valve_course}
+      PGUSER: ${POSTGRES_USER:-valve_course}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: ['/bin/sh', '/scripts/dump.sh']
+    volumes:
+      - backup-staging:/staging
+      - ./infra/backup:/scripts:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [app-net]
+
+  backup:
+    image: restic/restic:0.18.1
+    profiles: [backup]
+    env_file: .env
+    entrypoint: ['/bin/sh', '/scripts/backup.sh']
+    volumes:
+      - medical-data:/data/medical:ro
+      - backup-staging:/staging:ro
+      - backup-repository:/repository
+      - ./infra/backup:/scripts:ro
+    depends_on:
+      backup-db: { condition: service_completed_successfully }
+    networks: [app-net]
+
+networks:
+  public-net:
+  app-net:
+    internal: true
+  model-net:
+
+volumes:
+  postgres-data:
+  redis-data:
+  medical-data:
+  backup-staging:
+  backup-repository:
+  caddy-data:
+  caddy-config:

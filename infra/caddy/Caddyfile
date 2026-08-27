@@ -1,0 +1,26 @@
+{
+  auto_https off
+  admin off
+}
+
+:80 {
+  encode zstd gzip
+
+  @api path /api/*
+  handle @api {
+    reverse_proxy api:3000
+  }
+
+  handle {
+    reverse_proxy web:80
+  }
+
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    Permissions-Policy "camera=(self), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: blob:; connect-src 'self'; style-src 'self'; script-src 'self'"
+    Cross-Origin-Opener-Policy same-origin
+    -Server
+  }
+}

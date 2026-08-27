@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+.pnpm-store
+node_modules
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+*.log
+medical-data
+local-data
+tmp
