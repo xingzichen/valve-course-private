@@ -50,15 +50,27 @@ const categories = computed(() => {
   }
   return [...counts.entries()];
 });
-const visibleDocuments = computed(() =>
+const filteredDocuments = computed(() =>
   category.value === 'ALL'
     ? documents.value
     : documents.value.filter((document) => document.documentType === category.value)
 );
+const queuedDocuments = computed(() =>
+  filteredDocuments.value.filter((document) => !document.documentedAt)
+);
+const timelineDocuments = computed(() =>
+  filteredDocuments.value
+    .filter((document) => document.documentedAt)
+    .sort(
+      (left, right) =>
+        new Date(right.documentedAt).getTime() - new Date(left.documentedAt).getTime()
+    )
+);
 const latestRun = computed(() => extraction.value?.runs?.[0] ?? null);
 
 function reportTime(document: any): string {
-  return new Date(document.documentedAt || document.createdAt).toLocaleString('zh-CN', {
+  if (!document.documentedAt) return '报告时间待识别';
+  return new Date(document.documentedAt).toLocaleString('zh-CN', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -197,15 +209,39 @@ onBeforeUnmount(() => window.clearInterval(pollTimer));
 
   <div class="two-col docs-layout">
     <section class="panel">
+      <div v-if="queuedDocuments.length" class="recognition-queue">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">AI QUEUE</p>
+            <h2>自动识别队列</h2>
+          </div>
+          <span>{{ queuedDocuments.length }} 份</span>
+        </div>
+        <p>识别完成并取得报告日期后，文件会自动进入下方医疗时间线。</p>
+        <div class="recognition-queue-list">
+          <button
+            v-for="document in queuedDocuments"
+            :key="document.id"
+            :class="selected?.id === document.id ? 'selected' : ''"
+            @click="inspect(document)"
+          >
+            <strong>{{ document.originalFilename }}</strong>
+            <span :class="['status', `status-${document.status.toLowerCase()}`]">
+              {{ statusLabels[document.status] || document.status }}
+            </span>
+          </button>
+        </div>
+      </div>
+
       <div class="section-head">
         <div>
           <p class="eyebrow">MEDICAL TIMELINE</p>
           <h2>病例与报告时间线</h2>
         </div>
-        <span>{{ visibleDocuments.length }} 份</span>
+        <span>{{ timelineDocuments.length }} 份</span>
       </div>
-      <div v-if="visibleDocuments.length" class="document-timeline">
-        <article v-for="document in visibleDocuments" :key="document.id">
+      <div v-if="timelineDocuments.length" class="document-timeline">
+        <article v-for="document in timelineDocuments" :key="document.id">
           <div class="document-time">
             <span></span>
             <time>{{ reportTime(document) }}</time>
@@ -228,7 +264,11 @@ onBeforeUnmount(() => window.clearInterval(pollTimer));
           </button>
         </article>
       </div>
-      <EmptyState v-else title="还没有报告" text="拍摄或选择第一份医疗文件，系统会自动归档。" />
+      <EmptyState
+        v-else
+        title="还没有带报告日期的记录"
+        text="文件识别出检查、采样、开具或就诊时间后，会自动按该时间归档。"
+      />
     </section>
 
     <section v-if="selected" class="panel sticky-panel document-detail">

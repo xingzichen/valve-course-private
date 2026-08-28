@@ -269,6 +269,10 @@ documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 
       .createQueryBuilder('event')
       .where("event.metadata ->> 'documentId' = :documentId", { documentId: document.id })
       .getOne();
+    if (!document.documentedAt) {
+      if (existing) await this.timeline.remove(existing);
+      return;
+    }
     const event =
       existing ??
       this.timeline.create({
@@ -278,7 +282,7 @@ documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 
       });
     event.title = document.title ?? document.originalFilename;
     event.description = document.summary;
-    event.occurredAt = document.documentedAt ?? document.createdAt;
+    event.occurredAt = document.documentedAt;
     event.verificationStatus = 'PENDING';
     event.metadata = {
       ...event.metadata,

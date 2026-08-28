@@ -850,6 +850,42 @@ blockquote {
   background: var(--green);
   color: #fff;
 }
+.recognition-queue {
+  margin-bottom: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+.recognition-queue > p {
+  margin: 7px 0 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.recognition-queue-list {
+  display: grid;
+  gap: 7px;
+}
+.recognition-queue-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  text-align: left;
+  background: #f8f6f1;
+  border: 1px solid transparent;
+}
+.recognition-queue-list button.selected {
+  border-color: #84a093;
+  background: #eef4ef;
+}
+.recognition-queue-list strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
 .document-timeline {
   display: grid;
   gap: 0;
