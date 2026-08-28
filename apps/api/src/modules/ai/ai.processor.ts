@@ -3,7 +3,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Job } from 'bullmq';
 import { IsNull, Repository } from 'typeorm';
-import { z } from 'zod';
 
 import {
   AiAnalysisEntity,
@@ -19,23 +18,14 @@ import {
 } from '../../database/entities';
 import { OmlxService } from '../omlx/omlx.service';
 import { AI_QUEUE } from './ai.constants';
-
-const responseSchema = z.object({
-  answer: z.string(),
-  evidence: z
-    .array(z.object({ ref: z.string(), statement: z.string(), sourceType: z.string() }))
-    .default([]),
-  uncertainties: z.array(z.string()).default([]),
-  questionsForDoctor: z.array(z.string()).default([]),
-  urgentWarning: z.string().nullable().default(null)
-});
+import { analysisResponseSchema } from './ai-response';
 
 const systemPrompt = `你是一个为单个家庭服务的医疗共同决策与病程整理助手。你可以进行充分分析，但必须遵守：
 1. 不替代医生诊断，不创建医嘱，不把网络科普变成患者个体医嘱，不指示自行启停、换药或改剂量。
 2. “经治医生针对本人医嘱”优先于其他来源；在线科普、患者经验、AI 分析只能作为讨论材料并明确标记。
 3. 只使用上下文中的资料；未知就说未知，不补造事实。高风险字段只有 verificationStatus=CONFIRMED 才能作为已确认事实。
 4. 涉及胸痛、晕厥、严重呼吸困难、持续快速心率、疑似卒中或大出血时，明确建议立即联系急救/就医。
-5. 返回单一 JSON 对象，不要 Markdown，结构为 answer/evidence/uncertainties/questionsForDoctor/urgentWarning。evidence 的 ref 必须引用上下文中的 [REF:...]。`;
+5. 返回单一 JSON 对象，不要 Markdown，结构为 answer/evidence/uncertainties/questionsForDoctor/urgentWarning。evidence 是对象数组，每项必须有引用上下文 [REF:...] 的 ref；statement 和 sourceType 可用于简述证据及来源类型。`;
 
 @Injectable()
 @Processor(AI_QUEUE, { concurrency: 1 })
@@ -73,7 +63,7 @@ export class AiProcessor extends WorkerHost {
         temperature: 0.1,
         maxTokens: 5000
       });
-      const parsed = responseSchema.parse(this.omlx.parseJson(result.content));
+      const parsed = analysisResponseSchema.parse(this.omlx.parseJson(result.content));
       analysis.status = 'COMPLETED';
       analysis.answer = [
         parsed.answer,
