@@ -16,7 +16,7 @@ export const envSchema = z.object({
   OMLX_BASE_URL: z.string().url().default('http://localhost:5008/v1'),
   OMLX_API_KEY: z.string().default(''),
   OMLX_CHAT_MODEL: z.string().default('Qwen3.8-27B-6bit'),
-  OMLX_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000)
+  OMLX_TIMEOUT_MS: z.coerce.number().int().positive().default(360_000)
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

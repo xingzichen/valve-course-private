@@ -146,13 +146,13 @@ export class DocumentProcessor extends WorkerHost {
       const prompt = `识别医疗文档第 ${pageNumbers} 页并自动分类。documentType 只能是 ECG_PDF、AFIB_HISTORY_PDF、MEDICATION_LIST、ECHO_REPORT、LAB_REPORT、PRESCRIPTION、OUTPATIENT_RECORD、DISCHARGE_SUMMARY、OTHER。
 documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 ECG 记录时间；不得使用出生日期或上传时间。能看见时用带 +08:00 时区的 ISO 8601，只有日期时用当天 12:00:00+08:00 并将 datePrecision 设为 DATE，看不见则为 null/UNKNOWN。
 返回结构：{"documentType":"枚举","title":"文档标题","summary":"忠实摘要","documentedAt":null,"datePrecision":"DATETIME|DATE|UNKNOWN","facility":null,"department":null,"facts":[{"fieldKey":"稳定英文键","label":"中文字段名","valueText":"原值","valueNumeric":null,"unit":null,"referenceRange":null,"abnormalFlag":"NORMAL|HIGH|LOW|ABNORMAL|CRITICAL|UNKNOWN","factKind":"MEASUREMENT|DIAGNOSIS|MEDICATION|INSTRUCTION|ECG_CLASSIFICATION|METADATA|OTHER","pageNumber":1,"originalText":"包含字段和值的原文片段","confidence":0.0,"highRisk":false}],"warnings":[]}。
-必须完整提取所有可见化验指标、超声参数、ECG 元数据/设备原始分类、诊断、药物名称/规格/剂量/频次/疗程以及医生明确写出的医嘱。药物、剂量、频次、INR、诊断、超声关键参数、异常/危急值和 ECG 分类 highRisk=true。当前实际页码为 ${pageNumbers}，不要从 1 重新编号。`;
+必须完整提取所有可见化验指标、超声参数、ECG 元数据/设备原始分类、诊断、药物名称/规格/剂量/频次/疗程以及医生明确写出的医嘱。药物、剂量、频次、INR、诊断、超声关键参数、异常/危急值和 ECG 分类 highRisk=true。summary 不超过 200 字，每个 originalText 只保留包含该字段和值的最短原文，避免重复。当前实际页码为 ${pageNumbers}，不要从 1 重新编号。`;
       const result = await this.omlx.chat({
         system: extractionSystemPrompt,
         prompt,
         images: batch.map(({ mimeType, base64 }) => ({ mimeType, base64 })),
         temperature: 0,
-        maxTokens: 10_000
+        maxTokens: 6000
       });
       results.push(await this.parseExtraction(result.content));
     }
@@ -171,7 +171,7 @@ documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 
         '你只负责把给定的医疗文档识别结果规范为指定 JSON。不得新增、删除或改写任何医疗事实；缺失的可选值填 null 或默认值。只输出单一 JSON。',
       prompt: `按 documentType/title/summary/documentedAt/datePrecision/facility/department/facts/warnings 结构修复以下输出。facts 必须保留原有条目，并包含 fieldKey/label/valueText/valueNumeric/unit/referenceRange/abnormalFlag/factKind/pageNumber/originalText/confidence/highRisk。\n\n${content}`,
       temperature: 0,
-      maxTokens: 10_000
+      maxTokens: 6000
     });
     return documentExtractionSchema.parse(this.omlx.parseJson(repair.content));
   }
@@ -245,7 +245,7 @@ documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 
         system: adviceSystemPrompt,
         prompt: `结合以下档案生成针对这份文档的说明。返回：{"overview":"整体说明","keyFindings":[{"label":"要点","explanation":"与患者背景相关但不越界的解释","evidenceFieldKeys":["事实键"]}],"followUpActions":["安全的核对或复诊行动"],"questionsForDoctor":["需要向经治医生确认的问题"],"urgentWarning":null,"limitations":["识别内容尚未人工核对，不能替代医生诊断或医嘱"]}。不得把处方照片自动视为已经确认执行的医嘱。\n\n${JSON.stringify(context)}`,
         temperature: 0.1,
-        maxTokens: 5000
+        maxTokens: 2500
       });
       return sanitizeDocumentAdvice(
         extraction,

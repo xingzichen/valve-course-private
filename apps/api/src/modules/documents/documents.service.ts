@@ -236,7 +236,10 @@ export class DocumentsService {
         where: { documentId: document.id },
         order: { createdAt: 'DESC' }
       });
-      if (latest?.promptVersion === DOCUMENT_PROMPT_VERSION && document.status !== 'UPLOADED')
+      if (
+        latest?.promptVersion === DOCUMENT_PROMPT_VERSION &&
+        document.status === 'REVIEW_REQUIRED'
+      )
         continue;
       try {
         await this.enqueue(document.id);
