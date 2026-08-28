@@ -224,7 +224,7 @@ export class DocumentsService {
   async recoverIncomplete(): Promise<number> {
     const documents = await this.documents.find({
       where: {
-        status: In(['UPLOADED', 'FAILED', 'REVIEW_REQUIRED']),
+        status: In(['UPLOADED', 'QUEUED', 'PROCESSING', 'FAILED', 'REVIEW_REQUIRED']),
         archivedAt: IsNull()
       },
       order: { createdAt: 'ASC' },
@@ -236,6 +236,12 @@ export class DocumentsService {
         where: { documentId: document.id },
         order: { createdAt: 'DESC' }
       });
+      if (
+        ['QUEUED', 'PROCESSING'].includes(document.status) &&
+        !(await this.reconcileInterruptedRun(document, latest))
+      ) {
+        continue;
+      }
       if (
         latest?.promptVersion === DOCUMENT_PROMPT_VERSION &&
         document.status === 'REVIEW_REQUIRED'
@@ -251,6 +257,31 @@ export class DocumentsService {
       }
     }
     return queued;
+  }
+
+  private async reconcileInterruptedRun(
+    document: DocumentEntity,
+    latest: ExtractionRunEntity | null
+  ): Promise<boolean> {
+    if (latest) {
+      try {
+        const job = await this.queue.getJob(latest.id);
+        const state = job ? await job.getState() : 'unknown';
+        if (!['completed', 'failed', 'unknown'].includes(state)) return false;
+        latest.status = 'FAILED';
+        latest.completedAt ??= new Date();
+        latest.errorMessage = '上一次识别因 Worker 停止或版本更新中断，已自动重新入队';
+        await this.runs.save(latest);
+      } catch (error) {
+        this.logger.warn(
+          `Could not inspect interrupted extraction ${latest.id}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        return false;
+      }
+    }
+    document.status = 'FAILED';
+    await this.documents.save(document);
+    return true;
   }
 
   async sanitizeExistingAdvice(): Promise<number> {
