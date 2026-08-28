@@ -9,6 +9,10 @@ export class DocumentRecoveryService implements OnApplicationBootstrap {
   constructor(private readonly documents: DocumentsService) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    const sanitized = await this.documents.sanitizeExistingAdvice();
+    if (sanitized > 0) {
+      this.logger.log(`Applied medical advice safety rules to ${sanitized} existing documents`);
+    }
     const recovered = await this.documents.recoverIncomplete();
     if (recovered > 0) {
       this.logger.log(`Queued ${recovered} documents for automatic v2 recognition`);

@@ -14,6 +14,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { MultipartFile } from '@fastify/multipart';
+import { documentAdviceSchema, documentExtractionSchema } from '@valve/contracts';
 import type { FastifyReply } from 'fastify';
 import type { Queue } from 'bullmq';
 import { In, IsNull, Repository } from 'typeorm';
@@ -27,6 +28,7 @@ import {
   SourceEntity
 } from '../../database/entities';
 import { parseWithSchema } from '../../common/zod';
+import { sanitizeDocumentAdvice } from './document-advice-safety';
 import { DOCUMENT_PROMPT_VERSION, DOCUMENT_QUEUE } from './documents.constants';
 
 const verificationSchema = z.object({
@@ -246,6 +248,54 @@ export class DocumentsService {
       }
     }
     return queued;
+  }
+
+  async sanitizeExistingAdvice(): Promise<number> {
+    const documents = await this.documents
+      .createQueryBuilder('document')
+      .where('document.archived_at IS NULL')
+      .andWhere('document.ai_advice IS NOT NULL')
+      .getMany();
+    let updated = 0;
+    for (const document of documents) {
+      const advice = documentAdviceSchema.safeParse(document.aiAdvice);
+      if (!advice.success) continue;
+      const facts = await this.facts.find({
+        where: { documentId: document.id, archivedAt: IsNull() },
+        order: { createdAt: 'ASC' }
+      });
+      const extraction = documentExtractionSchema.safeParse({
+        documentType: document.documentType,
+        title: document.title ?? document.originalFilename,
+        summary: document.summary ?? '',
+        documentedAt: document.documentedAt?.toISOString() ?? null,
+        datePrecision: document.datePrecision,
+        facility: document.facility,
+        department: document.department,
+        warnings: document.warnings,
+        facts: facts.map((fact) => ({
+          fieldKey: fact.fieldKey,
+          label: fact.label,
+          valueText: fact.valueText,
+          valueNumeric: fact.valueNumeric,
+          unit: fact.unit,
+          referenceRange: fact.referenceRange,
+          abnormalFlag: fact.abnormalFlag,
+          factKind: fact.factKind,
+          pageNumber: fact.pageNumber,
+          originalText: fact.originalText,
+          confidence: fact.confidence,
+          highRisk: fact.highRisk
+        }))
+      });
+      if (!extraction.success) continue;
+      const sanitized = sanitizeDocumentAdvice(extraction.data, advice.data);
+      if (JSON.stringify(sanitized) === JSON.stringify(advice.data)) continue;
+      document.aiAdvice = sanitized;
+      await this.documents.save(document);
+      updated += 1;
+    }
+    return updated;
   }
 
   async documentImages(

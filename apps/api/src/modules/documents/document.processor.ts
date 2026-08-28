@@ -26,6 +26,7 @@ import {
   TimelineEventEntity
 } from '../../database/entities';
 import { OmlxService } from '../omlx/omlx.service';
+import { sanitizeDocumentAdvice } from './document-advice-safety';
 import { DOCUMENT_QUEUE } from './documents.constants';
 
 const extractionSystemPrompt = `你是私人医疗档案的文档识别助手。只能忠实读取图像中明确可见的内容：
@@ -36,6 +37,8 @@ const extractionSystemPrompt = `你是私人医疗档案的文档识别助手。
 
 const adviceSystemPrompt = `你是私人医疗档案的安全分析助手。输入包含尚未人工确认的模型转录结果以及既有患者背景。
 你可以整理报告含义、异常项、复诊问题和随访建议，但不能做确定诊断，不能创建处方，不能指示自行启停、换药或改剂量。
+只讨论与这份报告直接相关的临床主题；不得把 NT-proBNP、血常规、肝肾功能等无关指标延伸为抗凝启停、华法林/利伐沙班选择或血栓风险判断。只有报告本身明确含凝血指标、抗凝药物或医生相关医嘱时，才可提出抗凝相关核对问题。
+正常单项指标不能被表述为排除、确诊或证明某种疾病，也不能据此降低复诊或随访必要性。
 患者背景只用于提高针对性；报告原文与经治医生针对患者本人的医嘱优先。若材料出现明确危急值或紧急症状，urgentWarning 应提示立即联系急救或就医；否则必须为 null。
 输出单一 JSON 对象，不要 Markdown。`;
 
@@ -244,7 +247,10 @@ documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 
         temperature: 0.1,
         maxTokens: 5000
       });
-      return documentAdviceSchema.parse(this.omlx.parseJson(result.content));
+      return sanitizeDocumentAdvice(
+        extraction,
+        documentAdviceSchema.parse(this.omlx.parseJson(result.content))
+      );
     } catch {
       const abnormal = extraction.facts.filter((fact) =>
         ['HIGH', 'LOW', 'ABNORMAL', 'CRITICAL'].includes(fact.abnormalFlag)
