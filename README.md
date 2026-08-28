@@ -8,7 +8,8 @@
 - NestJS + Fastify API 与后台 Worker。
 - PostgreSQL + pgvector、Redis/BullMQ、NAS 文件存储。
 - 患者档案、来源、病程时间线、医嘱、用药、检查、ECG 和审计。
-- PDF/图片上传、Qwen3.8-27B-6bit 多模态提取和人工确认。
+- PDF/JPEG/PNG/HEIC 多文件上传与拍摄，上传后自动排队、分类、识别报告时间及结构化字段。
+- Qwen3.8-27B-6bit 多模态提取、文档专属分析建议、病程时间线归档和逐字段人工确认。
 - Apple Watch ECG PDF 导入；HealthKit 原生同步桥在后续阶段实现。
 - 网络科普与患者本人医嘱强制分源；只有已确认的经治医生医嘱可以建立服药计划。
 - 胸痛、晕厥、严重呼吸困难、卒中表现和大出血等由确定性规则优先拦截，不依赖模型判断。

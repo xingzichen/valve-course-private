@@ -6,8 +6,8 @@ import { pipeline } from 'node:stream/promises';
 
 import { InjectQueue } from '@nestjs/bullmq';
 import {
-  ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   UnsupportedMediaTypeException
 } from '@nestjs/common';
@@ -16,7 +16,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { MultipartFile } from '@fastify/multipart';
 import type { FastifyReply } from 'fastify';
 import type { Queue } from 'bullmq';
-import { IsNull, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { z } from 'zod';
 
 import type { AppEnv } from '../../config/env';
@@ -29,17 +29,6 @@ import {
 import { parseWithSchema } from '../../common/zod';
 import { DOCUMENT_PROMPT_VERSION, DOCUMENT_QUEUE } from './documents.constants';
 
-const documentTypeSchema = z.enum([
-  'ECG_PDF',
-  'AFIB_HISTORY_PDF',
-  'MEDICATION_LIST',
-  'ECHO_REPORT',
-  'LAB_REPORT',
-  'PRESCRIPTION',
-  'OUTPATIENT_RECORD',
-  'DISCHARGE_SUMMARY',
-  'OTHER'
-]);
 const verificationSchema = z.object({
   status: z.enum(['CONFIRMED', 'REJECTED']),
   valueText: z.string().max(30_000).optional()
@@ -47,6 +36,8 @@ const verificationSchema = z.object({
 
 @Injectable()
 export class DocumentsService {
+  private readonly logger = new Logger(DocumentsService.name);
+
   constructor(
     @InjectRepository(DocumentEntity) private readonly documents: Repository<DocumentEntity>,
     @InjectRepository(ExtractionRunEntity) private readonly runs: Repository<ExtractionRunEntity>,
@@ -58,10 +49,12 @@ export class DocumentsService {
 
   async upload(
     file: MultipartFile,
-    documentTypeInput: unknown,
     sourceId?: string
-  ): Promise<{ document: DocumentEntity; duplicate: boolean }> {
-    const documentType = parseWithSchema(documentTypeSchema, documentTypeInput || 'OTHER');
+  ): Promise<{
+    document: DocumentEntity;
+    duplicate: boolean;
+    extractionRun: ExtractionRunEntity | null;
+  }> {
     if (
       sourceId &&
       !(await this.sources.exist({ where: { id: sourceId, archivedAt: IsNull() } }))
@@ -84,16 +77,26 @@ export class DocumentsService {
       if (!detected)
         throw new UnsupportedMediaTypeException({
           code: 'FILE_TYPE_NOT_ALLOWED',
-          message: '仅支持 PDF、JPEG 和 PNG 文件'
+          message: '仅支持 PDF、JPEG、PNG 和 HEIC/HEIF 文件'
         });
       const sha256 = hash.digest('hex');
       const duplicate = await this.documents.findOne({ where: { sha256 } });
       if (duplicate) {
         await rm(tempPath, { force: true });
-        return { document: duplicate, duplicate: true };
+        return {
+          document: duplicate,
+          duplicate: true,
+          extractionRun: await this.ensureAutomaticQueue(duplicate)
+        };
       }
       const ext =
-        detected === 'application/pdf' ? '.pdf' : detected === 'image/png' ? '.png' : '.jpg';
+        detected === 'application/pdf'
+          ? '.pdf'
+          : detected === 'image/png'
+            ? '.png'
+            : detected === 'image/heic'
+              ? '.heic'
+              : '.jpg';
       const finalPath = join(root, sha256.slice(0, 2), sha256.slice(2, 4), `${sha256}${ext}`);
       await mkdir(dirname(finalPath), { recursive: true });
       await rename(tempPath, finalPath);
@@ -104,12 +107,16 @@ export class DocumentsService {
           mimeType: detected,
           sizeBytes: String(bytes),
           storagePath: finalPath,
-          documentType,
+          documentType: 'OTHER',
           status: 'UPLOADED',
           sourceId: sourceId ?? null
         })
       );
-      return { document, duplicate: false };
+      return {
+        document,
+        duplicate: false,
+        extractionRun: await this.enqueue(document.id)
+      };
     } catch (error) {
       await rm(tempPath, { force: true });
       throw error;
@@ -117,11 +124,13 @@ export class DocumentsService {
   }
 
   list(limit: number): Promise<DocumentEntity[]> {
-    return this.documents.find({
-      where: { archivedAt: IsNull() },
-      order: { createdAt: 'DESC' },
-      take: Math.min(Math.max(limit, 1), 200)
-    });
+    return this.documents
+      .createQueryBuilder('document')
+      .where('document.archived_at IS NULL')
+      .orderBy('COALESCE(document.documented_at, document.created_at)', 'DESC')
+      .addOrderBy('document.created_at', 'DESC')
+      .take(Math.min(Math.max(limit, 1), 200))
+      .getMany();
   }
 
   async get(id: string): Promise<DocumentEntity> {
@@ -144,15 +153,10 @@ export class DocumentsService {
   async enqueue(id: string): Promise<ExtractionRunEntity> {
     const document = await this.get(id);
     const active = await this.runs.findOne({
-      where: { documentId: id, status: 'QUEUED' },
+      where: { documentId: id, status: In(['QUEUED', 'PROCESSING']) },
       order: { createdAt: 'DESC' }
     });
-    if (active)
-      throw new ConflictException({
-        code: 'EXTRACTION_ALREADY_QUEUED',
-        message: '此文档已在等待解析',
-        runId: active.id
-      });
+    if (active) return active;
     const run = await this.runs.save(
       this.runs.create({
         documentId: id,
@@ -163,29 +167,40 @@ export class DocumentsService {
     );
     document.status = 'QUEUED';
     await this.documents.save(document);
-    await this.queue.add(
-      'extract',
-      { runId: run.id },
-      {
-        jobId: run.id,
-        attempts: 2,
-        backoff: { type: 'exponential', delay: 10_000 },
-        removeOnComplete: 100,
-        removeOnFail: 100
-      }
-    );
+    try {
+      await this.queue.add(
+        'extract',
+        { runId: run.id },
+        {
+          jobId: run.id,
+          attempts: 2,
+          backoff: { type: 'exponential', delay: 10_000 },
+          removeOnComplete: 100,
+          removeOnFail: 100
+        }
+      );
+    } catch (error) {
+      run.status = 'FAILED';
+      run.errorMessage = '识别队列暂时不可用，重新上传或重启 Worker 后会自动恢复';
+      run.completedAt = new Date();
+      document.status = 'UPLOADED';
+      await Promise.all([this.runs.save(run), this.documents.save(document)]);
+      throw error;
+    }
     return run;
   }
 
-  async extraction(
-    id: string
-  ): Promise<{ runs: ExtractionRunEntity[]; facts: ExtractedFactEntity[] }> {
-    await this.get(id);
+  async extraction(id: string): Promise<{
+    document: DocumentEntity;
+    runs: ExtractionRunEntity[];
+    facts: ExtractedFactEntity[];
+  }> {
+    const document = await this.get(id);
     const [runs, facts] = await Promise.all([
       this.runs.find({ where: { documentId: id }, order: { createdAt: 'DESC' } }),
       this.facts.find({ where: { documentId: id }, order: { createdAt: 'ASC' } })
     ]);
-    return { runs, facts };
+    return { document, runs, facts };
   }
 
   async verifyFact(id: string, body: unknown): Promise<ExtractedFactEntity> {
@@ -194,7 +209,43 @@ export class DocumentsService {
     if (!fact) throw new NotFoundException({ code: 'FACT_NOT_FOUND', message: '抽取字段不存在' });
     fact.verificationStatus = input.status;
     if (input.valueText !== undefined) fact.valueText = input.valueText;
-    return this.facts.save(fact);
+    const saved = await this.facts.save(fact);
+    const pending = await this.facts.count({
+      where: { documentId: fact.documentId, verificationStatus: 'PENDING', archivedAt: IsNull() }
+    });
+    if (pending === 0) {
+      await this.documents.update({ id: fact.documentId }, { status: 'CONFIRMED' });
+    }
+    return saved;
+  }
+
+  async recoverIncomplete(): Promise<number> {
+    const documents = await this.documents.find({
+      where: {
+        status: In(['UPLOADED', 'FAILED', 'REVIEW_REQUIRED']),
+        archivedAt: IsNull()
+      },
+      order: { createdAt: 'ASC' },
+      take: 200
+    });
+    let queued = 0;
+    for (const document of documents) {
+      const latest = await this.runs.findOne({
+        where: { documentId: document.id },
+        order: { createdAt: 'DESC' }
+      });
+      if (latest?.promptVersion === DOCUMENT_PROMPT_VERSION && document.status !== 'UPLOADED')
+        continue;
+      try {
+        await this.enqueue(document.id);
+        queued += 1;
+      } catch (error) {
+        this.logger.error(
+          `Failed to recover document ${document.id}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    return queued;
   }
 
   async documentImages(
@@ -213,7 +264,7 @@ export class DocumentsService {
 
   private async detectMime(
     path: string
-  ): Promise<'application/pdf' | 'image/jpeg' | 'image/png' | null> {
+  ): Promise<'application/pdf' | 'image/jpeg' | 'image/png' | 'image/heic' | null> {
     const handle = await open(path, 'r');
     try {
       const bytes = Buffer.alloc(16);
@@ -222,9 +273,18 @@ export class DocumentsService {
       if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
       if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
         return 'image/png';
+      const containerBrand = bytes.subarray(4, 12).toString('ascii');
+      if (/^ftyp(heic|heix|hevc|hevx|mif1|msf1)$/.test(containerBrand)) return 'image/heic';
       return null;
     } finally {
       await handle.close();
     }
+  }
+
+  private async ensureAutomaticQueue(
+    document: DocumentEntity
+  ): Promise<ExtractionRunEntity | null> {
+    if (!['UPLOADED', 'FAILED'].includes(document.status)) return null;
+    return this.enqueue(document.id);
   }
 }

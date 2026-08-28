@@ -1,5 +1,6 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { jsonrepair } from 'jsonrepair';
 
 import type { AppEnv } from '../../config/env';
 
@@ -19,7 +20,12 @@ export class OmlxService {
     images?: Array<{ mimeType: string; base64: string }>;
     temperature?: number;
     maxTokens?: number;
-  }): Promise<{ content: string; model: string; raw: Record<string, unknown> }> {
+  }): Promise<{
+    content: string;
+    model: string;
+    finishReason: string | null;
+    raw: Record<string, unknown>;
+  }> {
     const baseUrl = this.config.get('OMLX_BASE_URL', { infer: true }).replace(/\/$/, '');
     const model = this.config.get('OMLX_CHAT_MODEL', { infer: true });
     const apiKey = this.config.get('OMLX_API_KEY', { infer: true });
@@ -61,13 +67,19 @@ export class OmlxService {
       });
     }
 
+    const responseText = await response.text();
     let raw: Record<string, unknown>;
     try {
-      raw = (await response.json()) as Record<string, unknown>;
+      raw = JSON.parse(responseText) as Record<string, unknown>;
     } catch {
       throw new ServiceUnavailableException({
         code: 'OMLX_INVALID_RESPONSE',
-        message: '本地模型返回了无法解析的响应'
+        message: '本地模型返回了无法解析的 HTTP 响应',
+        details: {
+          httpStatus: response.status,
+          contentType: response.headers.get('content-type'),
+          responseBytes: Buffer.byteLength(responseText)
+        }
       });
     }
     if (!response.ok) {
@@ -77,14 +89,16 @@ export class OmlxService {
         details: raw
       });
     }
-    const choices = raw.choices as Array<{ message?: { content?: string } }> | undefined;
-    const result = choices?.[0]?.message?.content;
+    const choices = raw.choices as
+      Array<{ finish_reason?: string | null; message?: { content?: string } }> | undefined;
+    const choice = choices?.[0];
+    const result = choice?.message?.content;
     if (!result)
       throw new ServiceUnavailableException({
         code: 'OMLX_EMPTY',
         message: '本地模型没有返回内容'
       });
-    return { content: result, model, raw };
+    return { content: result, model, finishReason: choice?.finish_reason ?? null, raw };
   }
 
   parseJson(content: string): unknown {
@@ -92,9 +106,42 @@ export class OmlxService {
       .trim()
       .replace(/^```(?:json)?\s*/i, '')
       .replace(/\s*```$/, '');
-    const firstBrace = trimmed.indexOf('{');
-    const lastBrace = trimmed.lastIndexOf('}');
-    if (firstBrace < 0 || lastBrace < firstBrace) throw new Error('模型输出中没有 JSON 对象');
-    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+    const object = this.firstJsonObject(trimmed) ?? trimmed.slice(trimmed.indexOf('{'));
+    if (!object || !object.includes('{')) throw new Error('模型输出中没有 JSON 对象');
+    try {
+      return JSON.parse(object);
+    } catch {
+      try {
+        return JSON.parse(jsonrepair(object));
+      } catch (error) {
+        throw new Error(
+          `模型 JSON 无法修复：${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  }
+
+  private firstJsonObject(content: string): string | null {
+    const start = content.indexOf('{');
+    if (start < 0) return null;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < content.length; index += 1) {
+      const character = content[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) return content.slice(start, index + 1);
+      }
+    }
+    return null;
   }
 }

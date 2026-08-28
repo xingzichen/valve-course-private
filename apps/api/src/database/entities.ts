@@ -364,6 +364,31 @@ export class DocumentEntity extends BaseRecord {
   @Column({ name: 'document_type', type: 'varchar', length: 64, default: 'OTHER' })
   documentType: string;
 
+  @Column({ type: 'varchar', length: 300, nullable: true })
+  title: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  summary: string | null;
+
+  @Index()
+  @Column({ name: 'documented_at', type: 'timestamptz', nullable: true })
+  documentedAt: Date | null;
+
+  @Column({ name: 'date_precision', type: 'varchar', length: 20, default: 'UNKNOWN' })
+  datePrecision: string;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  facility: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  department: string | null;
+
+  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  warnings: string[];
+
+  @Column({ name: 'ai_advice', type: 'jsonb', nullable: true })
+  aiAdvice: Record<string, unknown> | null;
+
   @Index()
   @Column({ type: 'varchar', length: 40, default: 'UPLOADED' })
   status: string;
@@ -429,6 +454,15 @@ export class ExtractedFactEntity extends BaseRecord {
 
   @Column({ type: 'varchar', length: 80, nullable: true })
   unit: string | null;
+
+  @Column({ name: 'reference_range', type: 'varchar', length: 200, nullable: true })
+  referenceRange: string | null;
+
+  @Column({ name: 'abnormal_flag', type: 'varchar', length: 32, default: 'UNKNOWN' })
+  abnormalFlag: string;
+
+  @Column({ name: 'fact_kind', type: 'varchar', length: 40, default: 'OTHER' })
+  factKind: string;
 
   @Column({ name: 'page_number', type: 'integer', nullable: true })
   pageNumber: number | null;

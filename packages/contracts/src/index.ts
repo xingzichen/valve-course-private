@@ -50,12 +50,40 @@ export type DocumentStatus = z.infer<typeof documentStatusSchema>;
 export const extractedFactSchema = z.object({
   fieldKey: z.string().min(1),
   label: z.string().min(1),
-  valueText: z.string(),
-  valueNumeric: z.number().nullable().optional(),
-  unit: z.string().nullable().optional(),
-  pageNumber: z.number().int().positive().nullable().optional(),
-  originalText: z.string().nullable().optional(),
-  confidence: z.number().min(0).max(1).nullable().optional(),
+  valueText: z.union([z.string(), z.number(), z.boolean()]).transform(String),
+  valueNumeric: z
+    .union([z.number(), z.string()])
+    .transform((value) => (typeof value === 'number' ? value : Number(value)))
+    .pipe(z.number().finite())
+    .nullable()
+    .optional(),
+  unit: z.union([z.string(), z.number()]).transform(String).nullable().optional(),
+  referenceRange: z.union([z.string(), z.number()]).transform(String).nullable().optional(),
+  abnormalFlag: z
+    .enum(['NORMAL', 'HIGH', 'LOW', 'ABNORMAL', 'CRITICAL', 'UNKNOWN'])
+    .default('UNKNOWN'),
+  factKind: z
+    .enum([
+      'MEASUREMENT',
+      'DIAGNOSIS',
+      'MEDICATION',
+      'INSTRUCTION',
+      'ECG_CLASSIFICATION',
+      'METADATA',
+      'OTHER'
+    ])
+    .default('OTHER'),
+  pageNumber: z.coerce.number().int().positive().nullable().optional(),
+  originalText: z.union([z.string(), z.number()]).transform(String).nullable().optional(),
+  confidence: z
+    .union([z.number(), z.string()])
+    .transform((value) => {
+      const number = typeof value === 'number' ? value : Number(value);
+      return number > 1 && number <= 100 ? number / 100 : number;
+    })
+    .pipe(z.number().min(0).max(1))
+    .nullable()
+    .optional(),
   highRisk: z.boolean().default(false)
 });
 export type ExtractedFactPayload = z.infer<typeof extractedFactSchema>;
@@ -74,10 +102,37 @@ export const documentExtractionSchema = z.object({
   ]),
   title: z.string(),
   summary: z.string(),
+  documentedAt: z
+    .string()
+    .transform((value) => (/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00+08:00` : value))
+    .pipe(z.string().datetime({ offset: true }))
+    .nullable()
+    .default(null),
+  datePrecision: z.enum(['DATETIME', 'DATE', 'UNKNOWN']).default('UNKNOWN'),
+  facility: z.string().nullable().default(null),
+  department: z.string().nullable().default(null),
   facts: z.array(extractedFactSchema),
   warnings: z.array(z.string()).default([])
 });
 export type DocumentExtraction = z.infer<typeof documentExtractionSchema>;
+
+export const documentAdviceSchema = z.object({
+  overview: z.string(),
+  keyFindings: z
+    .array(
+      z.object({
+        label: z.string(),
+        explanation: z.string(),
+        evidenceFieldKeys: z.array(z.string()).default([])
+      })
+    )
+    .default([]),
+  followUpActions: z.array(z.string()).default([]),
+  questionsForDoctor: z.array(z.string()).default([]),
+  urgentWarning: z.string().nullable().default(null),
+  limitations: z.array(z.string()).default([])
+});
+export type DocumentAdvice = z.infer<typeof documentAdviceSchema>;
 
 export interface ApiErrorPayload {
   code: string;

@@ -112,6 +112,13 @@ onMounted(load);
           </div>
           <h3>{{ item.title }}</h3>
           <p>{{ item.description }}</p>
+          <RouterLink
+            v-if="item.metadata?.documentId"
+            class="timeline-document-link"
+            :to="{ path: '/documents', query: { document: item.metadata.documentId } }"
+          >
+            查看识别内容与 AI 提示 →
+          </RouterLink>
         </div>
       </article>
     </div>

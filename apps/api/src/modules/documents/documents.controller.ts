@@ -34,19 +34,27 @@ export class DocumentsController {
   @ApiConsumes('multipart/form-data')
   async upload(
     @Req() request: FastifyRequest,
-    @Query('documentType') documentType: string | undefined,
     @Query('sourceId') sourceId: string | undefined,
     @CurrentUser() user: CurrentUserValue
   ) {
     const file = await request.file();
     if (!file) throw new BadRequestException({ code: 'FILE_REQUIRED', message: '请选择一个文件' });
-    const result = await this.documents.upload(file, documentType, sourceId);
+    const result = await this.documents.upload(file, sourceId);
     await this.audit.record({
       actorUserId: user.id,
       action: result.duplicate ? 'DOCUMENT_DUPLICATE' : 'DOCUMENT_UPLOAD',
       resourceType: 'Document',
       resourceId: result.document.id
     });
+    if (result.extractionRun) {
+      await this.audit.record({
+        actorUserId: user.id,
+        action: 'DOCUMENT_AUTO_ANALYSIS_QUEUE',
+        resourceType: 'ExtractionRun',
+        resourceId: result.extractionRun.id,
+        metadata: { documentId: result.document.id }
+      });
+    }
     return result;
   }
 
