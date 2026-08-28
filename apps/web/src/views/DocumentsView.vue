@@ -5,7 +5,7 @@ import { api, patch, post } from '../api';
 import EmptyState from '../components/EmptyState.vue';
 
 const typeLabels: Record<string, string> = {
-  ECG_PDF: 'Apple Watch 心电图',
+  ECG_PDF: '心电图（含 Apple Watch）',
   AFIB_HISTORY_PDF: '房颤历史',
   MEDICATION_LIST: '用药清单',
   ECHO_REPORT: '心脏超声',
