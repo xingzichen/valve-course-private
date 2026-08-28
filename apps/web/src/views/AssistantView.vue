@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api, post } from '../api';
 import EmptyState from '../components/EmptyState.vue';
+import { renderMarkdown } from '../markdown';
 const analyses = ref<any[]>([]),
   question = ref(
     '请根据已确认的病程、检查、医嘱和用药记录，整理下次复诊最值得询问医生的 5 个问题。'
@@ -74,23 +75,35 @@ onUnmounted(() => {
       <fieldset class="urgent-check">
         <legend>提交前安全检查</legend>
         <p>如当前存在以下任一表现，请勾选。系统会绕过 AI，立即给出就医提示。</p>
-        <label><input v-model="urgentSymptoms.chestPain" type="checkbox" />胸痛/胸部压迫感</label>
-        <label><input v-model="urgentSymptoms.syncope" type="checkbox" />晕厥/意识丧失</label>
         <label
-          ><input v-model="urgentSymptoms.severeDyspnea" type="checkbox" />严重或突发呼吸困难</label
-        >
-        <label><input v-model="urgentSymptoms.strokeSigns" type="checkbox" />疑似卒中表现</label>
-        <label
-          ><input
-            v-model="urgentSymptoms.majorBleeding"
-            type="checkbox"
-          />大量/无法止住的出血</label
+          ><input v-model="urgentSymptoms.chestPain" type="checkbox" /><span
+            >胸痛/胸部压迫感</span
+          ></label
         >
         <label
-          ><input
-            v-model="urgentSymptoms.persistentFastHeartRate"
-            type="checkbox"
-          />持续快速心率且明显不适</label
+          ><input v-model="urgentSymptoms.syncope" type="checkbox" /><span
+            >晕厥/意识丧失</span
+          ></label
+        >
+        <label
+          ><input v-model="urgentSymptoms.severeDyspnea" type="checkbox" /><span
+            >严重或突发呼吸困难</span
+          ></label
+        >
+        <label
+          ><input v-model="urgentSymptoms.strokeSigns" type="checkbox" /><span
+            >疑似卒中表现</span
+          ></label
+        >
+        <label
+          ><input v-model="urgentSymptoms.majorBleeding" type="checkbox" /><span
+            >大量/无法止住的出血</span
+          ></label
+        >
+        <label
+          ><input v-model="urgentSymptoms.persistentFastHeartRate" type="checkbox" /><span
+            >持续快速心率且明显不适</span
+          ></label
         >
       </fieldset>
       <div v-if="hasUrgentSymptoms" class="notice urgent-notice">
@@ -112,7 +125,11 @@ onUnmounted(() => {
             ><span class="status">{{ a.status }}</span>
           </div>
           <h3>{{ a.question }}</h3>
-          <div v-if="a.answer" class="answer">{{ a.answer }}</div>
+          <div
+            v-if="a.answer"
+            class="answer markdown-content"
+            v-html="renderMarkdown(a.answer)"
+          ></div>
           <button v-if="a.status === 'COMPLETED'" class="quiet print-button" @click="printAnalysis">
             打印 / 保存为 PDF
           </button>

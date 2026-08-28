@@ -98,16 +98,37 @@ small {
   color: var(--muted);
   font-size: 0.86rem;
 }
-.urgent-check label {
+.ask-card .urgent-check label {
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 7px;
   font-weight: 600;
+  line-height: 1.45;
+  cursor: pointer;
 }
-.urgent-check input {
+.ask-card .urgent-check label:hover {
+  background: #fff2ec;
+}
+.ask-card .urgent-check label:focus-within {
+  outline: 2px solid rgba(165, 69, 62, 0.22);
+  outline-offset: 1px;
+}
+.ask-card .urgent-check input[type='checkbox'] {
   width: 1.1rem;
   height: 1.1rem;
+  flex: 0 0 auto;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  accent-color: var(--danger);
+}
+.ask-card .urgent-check label > span {
+  flex: 1;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 600;
 }
 .urgent-notice {
   border-color: #c93a2b;
@@ -1171,12 +1192,97 @@ blockquote {
   margin: 12px 0;
 }
 .answer {
-  white-space: pre-wrap;
   background: #f6f5ef;
   padding: 16px;
   border-radius: 9px;
   line-height: 1.8;
   font-size: 0.9rem;
+}
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin: 1.2rem 0 0.55rem;
+  color: var(--ink);
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  line-height: 1.4;
+}
+.markdown-content h1 {
+  font-size: 1.28rem;
+}
+.markdown-content h2 {
+  font-size: 1.14rem;
+}
+.markdown-content h3,
+.markdown-content h4 {
+  font-size: 1rem;
+}
+.markdown-content p,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content blockquote,
+.markdown-content pre,
+.markdown-content table {
+  margin: 0.65rem 0;
+}
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 1.45rem;
+}
+.markdown-content li {
+  margin: 0.3rem 0;
+  padding-left: 0.15rem;
+}
+.markdown-content li::marker {
+  color: var(--green);
+  font-weight: 700;
+}
+.markdown-content a {
+  color: var(--green);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+.markdown-content code {
+  padding: 0.12rem 0.32rem;
+  border-radius: 4px;
+  background: #e9ece6;
+  color: #315649;
+  font-size: 0.86em;
+}
+.markdown-content pre {
+  overflow-x: auto;
+  padding: 0.8rem 1rem;
+  border-radius: 7px;
+  background: #283832;
+  color: #f4f1e9;
+}
+.markdown-content pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+.markdown-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.markdown-content th,
+.markdown-content td {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-content th {
+  background: #e9eee9;
 }
 .analysis-list details {
   margin: 12px 0;
