@@ -19,4 +19,17 @@ describe('sourceSchema', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it('accepts an offline treating-doctor visit without a duplicated quote', () => {
+    const result = sourceSchema.safeParse({
+      sourceType: 'TREATING_DOCTOR_ORDER',
+      title: '2026-08-29 心内科门诊',
+      authorName: '测试医生',
+      organization: '测试医院',
+      specialty: '心内科',
+      publishedAt: '2026-08-29T09:00:00+08:00',
+      isPatientSpecific: true
+    });
+    expect(result.success).toBe(true);
+  });
 });

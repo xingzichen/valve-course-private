@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { api, post } from '../api';
 import EmptyState from '../components/EmptyState.vue';
 import SourceBadge from '../components/SourceBadge.vue';
@@ -11,7 +11,14 @@ const orders = ref<any[]>([]),
   decision = ref<any>(null),
   decisionOrder = ref<any>(null),
   plans = ref<any[]>([]),
-  planOpen = ref(false);
+  planOpen = ref(false),
+  createSourceWithOrder = ref(false),
+  newSourceTitle = ref('');
+const treatingSources = computed(() =>
+  sources.value.filter(
+    (source) => source.sourceType === 'TREATING_DOCTOR_ORDER' && source.isPatientSpecific
+  )
+);
 const localNow = () => {
   const d = new Date();
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -19,9 +26,6 @@ const localNow = () => {
 };
 const form = reactive<any>({
   orderedAt: localNow(),
-  doctorName: null,
-  hospital: null,
-  department: null,
   originalText: '',
   purpose: null,
   status: 'PENDING_CONFIRMATION',
@@ -44,6 +48,14 @@ const form = reactive<any>({
       monitoring: null
     }
   ]
+});
+const selectedTreatingSource = computed(() =>
+  treatingSources.value.find((source) => source.id === form.sourceId)
+);
+const newVisit = reactive<any>({
+  doctorName: '',
+  hospital: '',
+  department: ''
 });
 const ds = reactive<any>({
   clinicalFacts: {
@@ -81,13 +93,70 @@ async function load() {
     api<any[]>('/sources'),
     api<any[]>('/medication-plans')
   ]);
+  if (!treatingSources.value.some((source) => source.id === form.sourceId)) form.sourceId = '';
+  if (open.value && treatingSources.value.length === 0) createSourceWithOrder.value = true;
+}
+function toggleOrderForm() {
+  open.value = !open.value;
+  message.value = '';
+  if (open.value) createSourceWithOrder.value = treatingSources.value.length === 0;
+}
+function syncTimeFromSource() {
+  if (!selectedTreatingSource.value?.publishedAt) return;
+  const date = new Date(selectedTreatingSource.value.publishedAt);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  form.orderedAt = date.toISOString().slice(0, 16);
+}
+function toggleSourceMode() {
+  createSourceWithOrder.value = !createSourceWithOrder.value;
+  if (createSourceWithOrder.value) form.orderedAt = localNow();
+  else syncTimeFromSource();
+}
+function generatedSourceTitle() {
+  const date = form.orderedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const context = [newVisit.hospital, newVisit.department, newVisit.doctorName]
+    .filter(Boolean)
+    .join(' · ');
+  return `${date} ${context ? `${context} ` : ''}线下就医`.slice(0, 300);
 }
 async function save() {
   message.value = '';
   try {
-    await post('/orders', { ...form, orderedAt: new Date(form.orderedAt).toISOString() });
+    let sourceId = form.sourceId;
+    let source = selectedTreatingSource.value;
+    if (createSourceWithOrder.value) {
+      source = await post<any>('/sources', {
+        sourceType: 'TREATING_DOCTOR_ORDER',
+        title: newSourceTitle.value.trim() || generatedSourceTitle(),
+        authorName: newVisit.doctorName || null,
+        organization: newVisit.hospital || null,
+        specialty: newVisit.department || null,
+        publishedAt: new Date(form.orderedAt).toISOString(),
+        isPatientSpecific: true,
+        metadata: { createdFrom: 'medical-order-entry' }
+      });
+      sources.value.unshift(source);
+      sourceId = source.id;
+      form.sourceId = source.id;
+      createSourceWithOrder.value = false;
+      newSourceTitle.value = '';
+    }
+    if (!sourceId || !source) {
+      message.value = '请选择已有来源，或随本次医嘱新建来源。';
+      return;
+    }
+    await post('/orders', {
+      ...form,
+      sourceId,
+      orderedAt: source.publishedAt
+        ? new Date(source.publishedAt).toISOString()
+        : new Date(form.orderedAt).toISOString()
+    });
     open.value = false;
     form.originalText = '';
+    newVisit.doctorName = '';
+    newVisit.hospital = '';
+    newVisit.department = '';
     await load();
   } catch (e) {
     message.value = e instanceof Error ? e.message : '保存失败';
@@ -152,7 +221,7 @@ onMounted(load);
 <template>
   <div class="page-actions">
     <p>保留医生原话、备选方案和最终确认状态。</p>
-    <button class="primary" @click="open = !open">＋ 录入医嘱</button>
+    <button class="primary" @click="toggleOrderForm">＋ 录入医嘱</button>
   </div>
   <div class="notice caution-notice">
     <span>Rx</span>
@@ -162,26 +231,69 @@ onMounted(load);
     </div>
   </div>
   <form v-if="open" class="panel form-grid" @submit.prevent="save">
-    <label class="span-2"
-      ><span>医嘱来源 *</span
-      ><select v-model="form.sourceId" required>
-        <option disabled value="">选择一条“经治医生对本人医嘱”</option>
-        <option
-          v-for="s in sources.filter(
-            (x) => x.sourceType === 'TREATING_DOCTOR_ORDER' && x.isPatientSpecific
-          )"
-          :key="s.id"
-          :value="s.id"
+    <div class="span-2 order-source-entry">
+      <div class="source-entry-head">
+        <div>
+          <strong>医嘱来源 *</strong>
+          <small>用于保留这条医嘱由谁、在什么场景下给出。</small>
+        </div>
+        <button
+          v-if="treatingSources.length"
+          type="button"
+          class="secondary"
+          @click="toggleSourceMode"
         >
-          {{ s.title }}
-        </option></select
-      ><small
-        v-if="!sources.some((x) => x.sourceType === 'TREATING_DOCTOR_ORDER' && x.isPatientSpecific)"
-        >请先在“来源”中新建经治医生医嘱来源。</small
-      ></label
-    >
-    <label><span>医嘱时间</span><input v-model="form.orderedAt" type="datetime-local" /></label
-    ><label
+          {{ createSourceWithOrder ? '选择已有来源' : '＋ 随医嘱新建' }}
+        </button>
+      </div>
+      <label v-if="!createSourceWithOrder"
+        ><span>选择已有的线下就医记录</span
+        ><select v-model="form.sourceId" required @change="syncTimeFromSource">
+          <option disabled value="">请选择</option>
+          <option v-for="source in treatingSources" :key="source.id" :value="source.id">
+            {{ source.title }}
+          </option>
+        </select></label
+      >
+      <div v-else class="new-source-fields">
+        <div class="source-inline-note">
+          <strong>保存医嘱时会同时建立来源</strong>
+          <small>这里只记录一次线下就医信息；医生原话只在下方医嘱中保存。</small>
+        </div>
+        <div class="visit-context-grid">
+          <label
+            ><span>就医时间 *</span
+            ><input v-model="form.orderedAt" type="datetime-local" required /></label
+          ><label><span>医生</span><input v-model="newVisit.doctorName" /></label>
+          <label><span>科室</span><input v-model="newVisit.department" /></label
+          ><label><span>医院</span><input v-model="newVisit.hospital" /></label>
+          <label class="span-2"
+            ><span>来源名称（可选）</span
+            ><input
+              v-model="newSourceTitle"
+              maxlength="300"
+              placeholder="留空将按日期、医院和医生自动生成"
+          /></label>
+        </div>
+      </div>
+      <div v-if="!createSourceWithOrder && selectedTreatingSource" class="source-context-summary">
+        <span><b>就医时间</b>{{ new Date(form.orderedAt).toLocaleString('zh-CN') }}</span>
+        <span><b>医生</b>{{ selectedTreatingSource.authorName || '未记录' }}</span>
+        <span><b>科室</b>{{ selectedTreatingSource.specialty || '未记录' }}</span>
+        <span><b>医院</b>{{ selectedTreatingSource.organization || '未记录' }}</span>
+      </div>
+      <label
+        v-if="
+          !createSourceWithOrder && selectedTreatingSource && !selectedTreatingSource.publishedAt
+        "
+        ><span>医嘱时间（该来源未记录时间）</span
+        ><input v-model="form.orderedAt" type="datetime-local" required
+      /></label>
+      <small class="source-manage-link"
+        >需要维护其他资料？<RouterLink to="/sources">前往来源档案</RouterLink></small
+      >
+    </div>
+    <label class="span-2"
       ><span>确认状态</span
       ><select v-model="form.status">
         <option value="PENDING_CHOICE">待选择</option>
@@ -190,8 +302,6 @@ onMounted(load);
         <option value="COMPLETED">已完成</option>
       </select></label
     >
-    <label><span>医生</span><input v-model="form.doctorName" /></label
-    ><label><span>医院</span><input v-model="form.hospital" /></label>
     <label class="span-2"
       ><span>医生原话 *</span><textarea v-model="form.originalText" required rows="4" /></label
     ><label class="span-2"
@@ -290,7 +400,11 @@ onMounted(load);
           <button class="secondary" @click="decisionOrder = o">比较已给出的方案</button>
         </article>
       </div>
-      <EmptyState v-else title="尚无医嘱" text="先建立来源，再忠实录入医生原话。" />
+      <EmptyState
+        v-else
+        title="尚无医嘱"
+        text="点击“录入医嘱”，可在同一表单中建立来源并记录医生原话。"
+      />
     </section>
     <section v-if="decisionOrder" class="panel sticky-panel">
       <p class="eyebrow">SHARED DECISION</p>

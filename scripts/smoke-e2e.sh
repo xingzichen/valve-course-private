@@ -69,13 +69,16 @@ invalid_status="$(curl -sS \
 [[ "$invalid_status" == "422" ]]
 [[ "$(jq -r '.code' "$response_file")" == "ORDER_SOURCE_INVALID" ]]
 
-doctor_source="$(mutate POST /sources '{"sourceType":"TREATING_DOCTOR_ORDER","title":"心内科门诊医嘱","authorName":"测试医生","organization":"测试医院","specialty":"心内科","isPatientSpecific":true,"originalQuote":"医生给出华法林和利伐沙班两个讨论选项，需结合瓣膜病性质后确认。"}')"
+doctor_source="$(mutate POST /sources '{"sourceType":"TREATING_DOCTOR_ORDER","title":"心内科门诊医嘱","authorName":"测试医生","organization":"测试医院","specialty":"心内科","publishedAt":"2026-08-27T09:00:00+08:00","isPatientSpecific":true}')"
 doctor_source_id="$(jq -r '.id' <<<"$doctor_source")"
 
-order_body="$(jq -nc --arg sourceId "$doctor_source_id" '{orderedAt:"2026-08-27T09:00:00+08:00",doctorName:"测试医生",hospital:"测试医院",department:"心内科",originalText:"抗凝方案：华法林或利伐沙班，最终方案须经医生确认。",purpose:"房颤相关卒中预防",status:"PENDING_CHOICE",sourceId:$sourceId,options:[{name:"华法林方案",medicationName:"华法林",instructions:"遵医嘱服用",monitoring:"定期 INR"},{name:"利伐沙班方案",medicationName:"利伐沙班",instructions:"遵医嘱服用"}]}')"
+order_body="$(jq -nc --arg sourceId "$doctor_source_id" '{orderedAt:"2026-08-27T09:00:00+08:00",originalText:"抗凝方案：华法林或利伐沙班，最终方案须经医生确认。",purpose:"房颤相关卒中预防",status:"PENDING_CHOICE",sourceId:$sourceId,options:[{name:"华法林方案",medicationName:"华法林",instructions:"遵医嘱服用",monitoring:"定期 INR"},{name:"利伐沙班方案",medicationName:"利伐沙班",instructions:"遵医嘱服用"}]}')"
 order="$(mutate POST /orders "$order_body")"
 order_id="$(jq -r '.id' <<<"$order")"
 warfarin_option_id="$(jq -r '.options[] | select(.medicationName == "华法林") | .id' <<<"$order")"
+[[ "$(jq -r '.doctorName' <<<"$order")" == "测试医生" ]]
+[[ "$(jq -r '.hospital' <<<"$order")" == "测试医院" ]]
+[[ "$(jq -r '.department' <<<"$order")" == "心内科" ]]
 
 decision_body='{"clinicalFacts":{"rheumaticMitralStenosis":true,"moderateOrSevereMitralStenosis":true,"atrialFibrillation":true,"mechanicalValve":false},"preferences":{"canAttendRegularInrMonitoring":true,"canKeepDietAndMedicationRoutineStable":true,"acceptsDoseAdjustments":true,"stronglyPrefersNoRoutineBloodTests":false,"adherenceConfidence":"HIGH","primaryConcern":"SAFETY"}}'
 decision="$(mutate POST "/orders/$order_id/decision-support" "$decision_body")"

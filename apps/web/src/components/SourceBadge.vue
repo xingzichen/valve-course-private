@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const props = defineProps<{ type?: string; patientSpecific?: boolean }>();
 const labels: Record<string, string> = {
-  TREATING_DOCTOR_ORDER: '经治医生医嘱',
+  TREATING_DOCTOR_ORDER: '线下经治医生',
   PERSONALIZED_SECOND_OPINION: '个体化第二意见',
   DOCTOR_EXPLANATION: '医生讲解',
   MEDICAL_GUIDELINE: '医学指南',

@@ -55,9 +55,22 @@ export class ClinicalService {
   }
 
   async createSource(input: Record<string, unknown>): Promise<SourceEntity> {
+    const isOfflineTreatingDoctor = input.sourceType === 'TREATING_DOCTOR_ORDER';
     const value = {
       ...input,
-      publishedAt: input.publishedAt ? new Date(String(input.publishedAt)) : null
+      publishedAt: input.publishedAt ? new Date(String(input.publishedAt)) : null,
+      ...(isOfflineTreatingDoctor
+        ? {
+            platform: '线下就医',
+            url: null,
+            isPatientSpecific: true,
+            originalQuote: null,
+            metadata: {
+              ...((input.metadata as Record<string, unknown> | undefined) ?? {}),
+              channel: 'OFFLINE'
+            }
+          }
+        : {})
     };
     return this.sources.save(this.sources.create(value));
   }
@@ -93,14 +106,17 @@ export class ClinicalService {
     if (source.sourceType !== 'TREATING_DOCTOR_ORDER' || !source.isPatientSpecific) {
       throw new UnprocessableEntityException({
         code: 'ORDER_SOURCE_INVALID',
-        message: '医嘱必须关联“经治医生对患者本人的医嘱”来源；网络科普不能创建医嘱'
+        message: '医嘱必须关联患者本人的线下就医来源；网络科普不能创建医嘱'
       });
     }
     return this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(MedicalOrderEntity);
       const order = repository.create({
         ...input,
-        orderedAt: new Date(String(input.orderedAt)),
+        orderedAt: source.publishedAt ?? new Date(String(input.orderedAt)),
+        doctorName: source.authorName,
+        hospital: source.organization,
+        department: source.specialty,
         options: Array.isArray(input.options) ? input.options : []
       });
       return repository.save(order);
