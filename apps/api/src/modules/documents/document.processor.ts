@@ -44,6 +44,7 @@ const adviceSystemPrompt = `你是私人医疗档案的安全分析助手。输�
 
 interface RenderedPage {
   pageNumber: number;
+  sectionLabel?: string;
   mimeType: 'image/jpeg';
   base64: string;
 }
@@ -140,10 +141,14 @@ export class DocumentProcessor extends WorkerHost {
 
   private async extract(pages: RenderedPage[]): Promise<DocumentExtraction> {
     const results: DocumentExtraction[] = [];
-    for (let start = 0; start < pages.length; start += 3) {
-      const batch = pages.slice(start, start + 3);
+    const batchSize = pages.some((page) => page.sectionLabel) ? 1 : 3;
+    for (let start = 0; start < pages.length; start += batchSize) {
+      const batch = pages.slice(start, start + batchSize);
       const pageNumbers = batch.map((page) => page.pageNumber).join('、');
-      const prompt = `识别医疗文档第 ${pageNumbers} 页并自动分类。documentType 只能是 ECG_PDF、AFIB_HISTORY_PDF、MEDICATION_LIST、ECHO_REPORT、LAB_REPORT、PRESCRIPTION、OUTPATIENT_RECORD、DISCHARGE_SUMMARY、OTHER。
+      const sections = batch
+        .map((page) => `第${page.pageNumber}页${page.sectionLabel ?? '整页'}`)
+        .join('、');
+      const prompt = `识别医疗文档的${sections}并自动分类。documentType 只能是 ECG_PDF、AFIB_HISTORY_PDF、MEDICATION_LIST、ECHO_REPORT、LAB_REPORT、PRESCRIPTION、OUTPATIENT_RECORD、DISCHARGE_SUMMARY、OTHER。
 documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 ECG 记录时间；不得使用出生日期或上传时间。能看见时用带 +08:00 时区的 ISO 8601，只有日期时用当天 12:00:00+08:00 并将 datePrecision 设为 DATE，看不见则为 null/UNKNOWN。
 返回结构：{"documentType":"枚举","title":"文档标题","summary":"忠实摘要","documentedAt":null,"datePrecision":"DATETIME|DATE|UNKNOWN","facility":null,"department":null,"facts":[{"fieldKey":"稳定英文键","label":"中文字段名","valueText":"原值","valueNumeric":null,"unit":null,"referenceRange":null,"abnormalFlag":"NORMAL|HIGH|LOW|ABNORMAL|CRITICAL|UNKNOWN","factKind":"MEASUREMENT|DIAGNOSIS|MEDICATION|INSTRUCTION|ECG_CLASSIFICATION|METADATA|OTHER","pageNumber":1,"originalText":"包含字段和值的原文片段","confidence":0.0,"highRisk":false}],"warnings":[]}。
 必须完整提取所有可见化验指标、超声参数、ECG 元数据/设备原始分类、诊断、药物名称/规格/剂量/频次/疗程以及医生明确写出的医嘱。药物、剂量、频次、INR、诊断、超声关键参数、异常/危急值和 ECG 分类 highRisk=true。summary 不超过 200 字，每个 originalText 只保留包含该字段和值的最短原文，避免重复。当前实际页码为 ${pageNumbers}，不要从 1 重新编号。`;
@@ -304,16 +309,14 @@ documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 
     cleanup?: () => Promise<void>;
   }> {
     if (document.mimeType.startsWith('image/')) {
+      const sections = await this.normalizeImageSections(await readFile(document.storagePath));
       return {
-        pages: [
-          {
-            pageNumber: 1,
-            mimeType: 'image/jpeg',
-            base64: (await this.normalizeImage(await readFile(document.storagePath))).toString(
-              'base64'
-            )
-          }
-        ]
+        pages: sections.map((section) => ({
+          pageNumber: 1,
+          ...(section.label ? { sectionLabel: section.label } : {}),
+          mimeType: 'image/jpeg',
+          base64: section.buffer.toString('base64')
+        }))
       };
     }
     const directory = await mkdtemp(join(tmpdir(), 'valve-pdf-'));
@@ -361,6 +364,41 @@ documentedAt 只取检查时间、采样时间、开具时间、就诊时间或 
       .flatten({ background: '#ffffff' })
       .jpeg({ quality: 91, chromaSubsampling: '4:4:4' })
       .toBuffer();
+  }
+
+  private async normalizeImageSections(
+    buffer: Buffer
+  ): Promise<Array<{ label?: string; buffer: Buffer }>> {
+    const normalized = await this.normalizeImage(buffer);
+    const metadata = await sharp(normalized).metadata();
+    const width = metadata.width ?? 0;
+    const height = metadata.height ?? 0;
+    if (!width || !height || height < 1600 || height / width < 1.25) {
+      return [{ buffer: normalized }];
+    }
+    const sectionHeight = Math.ceil(height * 0.42);
+    const middleTop = Math.floor(height * 0.29);
+    const lowerTop = height - sectionHeight;
+    return [
+      {
+        label: '上部（含相邻重叠区）',
+        buffer: await sharp(normalized)
+          .extract({ left: 0, top: 0, width, height: sectionHeight })
+          .toBuffer()
+      },
+      {
+        label: '中部（含相邻重叠区）',
+        buffer: await sharp(normalized)
+          .extract({ left: 0, top: middleTop, width, height: sectionHeight })
+          .toBuffer()
+      },
+      {
+        label: '下部（含相邻重叠区）',
+        buffer: await sharp(normalized)
+          .extract({ left: 0, top: lowerTop, width, height: sectionHeight })
+          .toBuffer()
+      }
+    ];
   }
 
   private errorMessage(error: unknown): string {
